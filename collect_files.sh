@@ -1,76 +1,66 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
-usage() {
-  echo "Usage: $0 [--max_depth N] INPUT_DIR OUTPUT_DIR" >&2
-  exit 1
-}
-
 MAX_DEPTH=0
-
 if [[ "${1:-}" == "--max_depth" ]]; then
-  if [[ $# -lt 3 ]]; then
-    echo "Error: --max_depth requires a numeric argument and two dirs" >&2
-    usage
-  fi
   shift
-  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
-    echo "Error: max_depth must be a non-negative integer" >&2
-    usage
+  if (( $# < 3 )) || ! [[ "$1" =~ ^[0-9]+$ ]]; then
+    exit 1
   fi
-  MAX_DEPTH="$1"
+  MAX_DEPTH=$1
   shift
 fi
 
-if [[ $# -ne 2 ]]; then
-  usage
+if (( $# != 2 )); then
+  exit 1
 fi
 
-INPUT_DIR="$1"
-OUTPUT_DIR="$2"
+INPUT_DIR=$1
+OUTPUT_DIR=$2
 
 if [[ ! -d "$INPUT_DIR" ]]; then
-  echo "Error: input dir '$INPUT_DIR' not found or not a directory" >&2
   exit 1
 fi
 
 mkdir -p "$OUTPUT_DIR"
+declare -A seen
 
-declare -A name_counts
+if (( MAX_DEPTH > 0 )); then
+  FIND_OPTS=( -maxdepth "$MAX_DEPTH" )
+else
+  FIND_OPTS=()
+fi
 
-while IFS= read -r -d '' FILE; do
-  rel="${FILE#$INPUT_DIR/}"
-  dirpath=$(dirname "$rel")
+find "$INPUT_DIR" "${FIND_OPTS[@]}" -type f -print0 |
+while IFS= read -r -d '' file; do
+  rel="${file#$INPUT_DIR/}"
+  dirpart=$(dirname "$rel")
   base=$(basename "$rel")
 
   if (( MAX_DEPTH > 0 )); then
-    IFS='/' read -r -a parts <<< "$dirpath"
-    newpath=""
-    for ((i=0; i<${#parts[@]} && i<MAX_DEPTH; i++)); do
-      newpath="$newpath/${parts[i]}"
-    done
-    newpath="${newpath#/}"
-    dest_dir="$OUTPUT_DIR/$newpath"
+    dest_subdir="$OUTPUT_DIR/$dirpart"
   else
-    dest_dir="$OUTPUT_DIR"
+    dest_subdir="$OUTPUT_DIR"
+  fi
+  mkdir -p "$dest_subdir"
+
+  name="${base%.*}"
+  ext="${base##*.}"
+  if [[ "$name" == "$ext" ]]; then
+    ext=""
+  else
+    ext=".$ext"
   fi
 
-  mkdir -p "$dest_dir"
-
-  if [[ -n "${name_counts[$base]:-}" ]]; then
-    count=$(( name_counts[$base] + 1 ))
-    name_counts[$base]=$count
-    ext="${base##*.}"
-    name="${base%.*}"
-    if [[ "$ext" == "$base" ]]; then
-      newname="${name}_${count}"
-    else
-      newname="${name}_${count}.${ext}"
-    fi
+  newname="$name$ext"
+  if [[ -n "${seen[$newname]:-}" ]]; then
+    cnt=${seen[$newname]}
+    (( cnt++ ))
+    seen[$newname]=$cnt
+    newname="${name}_${cnt}${ext}"
   else
-    name_counts[$base]=1
-    newname="$base"
+    seen[$newname]=1
   fi
 
-  cp -p "$FILE" "$dest_dir/$newname"
-done < <(find "$INPUT_DIR" -type f -print0)
+  cp -p -- "$file" "$dest_subdir/$newname"
+done
