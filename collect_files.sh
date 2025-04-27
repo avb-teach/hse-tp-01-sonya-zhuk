@@ -1,72 +1,76 @@
 #!/usr/bin/env bash
 set -euo pipefail
-IFS=$'\n\t'
 
 usage() {
-  echo "Usage: $0 <input_dir> <output_dir> [--max_depth N]"
+  echo "Usage: $0 [--max_depth N] INPUT_DIR OUTPUT_DIR" >&2
   exit 1
 }
 
-if [[ $# -eq 2 ]]; then
-  INPUT_DIR=$1
-  OUTPUT_DIR=$2
-  MAX_DEPTH=
-elif [[ $# -eq 4 && $3 == "--max_depth" && $4 =~ ^[0-9]+$ ]]; then
-  INPUT_DIR=$1
-  OUTPUT_DIR=$2
-  MAX_DEPTH=$4
-else
+MAX_DEPTH=0
+
+if [[ "${1:-}" == "--max_depth" ]]; then
+  if [[ $# -lt 3 ]]; then
+    echo "Error: --max_depth requires a numeric argument and two dirs" >&2
+    usage
+  fi
+  shift
+  if ! [[ "$1" =~ ^[0-9]+$ ]]; then
+    echo "Error: max_depth must be a non-negative integer" >&2
+    usage
+  fi
+  MAX_DEPTH="$1"
+  shift
+fi
+
+if [[ $# -ne 2 ]]; then
   usage
 fi
 
+INPUT_DIR="$1"
+OUTPUT_DIR="$2"
+
 if [[ ! -d "$INPUT_DIR" ]]; then
-  echo "Error: input directory '$INPUT_DIR' not found"
+  echo "Error: input dir '$INPUT_DIR' not found or not a directory" >&2
   exit 1
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-# Collect files
-mapfile -t all_files < <(find "$INPUT_DIR" -type f)
+declare -A name_counts
 
-generate_unique_name() {
-  local dir="$1" name ext base candidate counter=1
-  base="$2"
-  name="${base%.*}"
-  ext="${base##*.}"
-  if [[ "$name" == "$ext" ]]; then ext=""; else ext=".$ext"; fi
-  candidate="$name$ext"
-  while [[ -e "$dir/$candidate" ]]; do
-    candidate="${name}(${counter})${ext}"
-    ((counter++))
-  done
-  echo "$candidate"
-}
+while IFS= read -r -d '' FILE; do
+  rel="${FILE#$INPUT_DIR/}"
+  dirpath=$(dirname "$rel")
+  base=$(basename "$rel")
 
-count=0
-
-for src in "${all_files[@]}"; do
-  # relative path without leading slash
-  rel="${src#${INPUT_DIR}/}"
-  if [[ -n "${MAX_DEPTH:-}" ]]; then
-    IFS='/' read -r -a parts <<< "$rel"
-    n=${#parts[@]}
-    if (( n <= MAX_DEPTH )); then
-      dest_rel="$rel"
-    else
-      start=$((MAX_DEPTH-1))
-      dest_rel="$(IFS=/; echo "${parts[@]:start}")"
-    fi
-    dest_dir="$OUTPUT_DIR/$(dirname "$dest_rel")"
-    base_name="$(basename "$dest_rel")"
-    mkdir -p "$dest_dir"
+  if (( MAX_DEPTH > 0 )); then
+    IFS='/' read -r -a parts <<< "$dirpath"
+    newpath=""
+    for ((i=0; i<${#parts[@]} && i<MAX_DEPTH; i++)); do
+      newpath="$newpath/${parts[i]}"
+    done
+    newpath="${newpath#/}"
+    dest_dir="$OUTPUT_DIR/$newpath"
   else
     dest_dir="$OUTPUT_DIR"
-    base_name="$(basename "$rel")"
   fi
-  uniq_name=$(generate_unique_name "$dest_dir" "$base_name")
-  cp -- "$src" "$dest_dir/$uniq_name"
-  ((count++))
-done
 
-echo "Copied $count files from '$INPUT_DIR' to '$OUTPUT_DIR'"
+  mkdir -p "$dest_dir"
+
+  if [[ -n "${name_counts[$base]:-}" ]]; then
+    count=$(( name_counts[$base] + 1 ))
+    name_counts[$base]=$count
+    ext="${base##*.}"
+    name="${base%.*}"
+    if [[ "$ext" == "$base" ]]; then
+      newname="${name}_${count}"
+    else
+      newname="${name}_${count}.${ext}"
+    fi
+  else
+    name_counts[$base]=1
+    newname="$base"
+  fi
+
+  cp -p "$FILE" "$dest_dir/$newname"
+done < <(find "$INPUT_DIR" -type f -print0)
