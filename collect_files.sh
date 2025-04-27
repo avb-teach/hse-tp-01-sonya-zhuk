@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+# -*- coding: utf-8 -*-
+
+if [ -z "${BASH_VERSION:-}" ]; then
+  exec /usr/bin/env bash "$0" "$@"
+fi
+
 set -euo pipefail
 
 usage() {
@@ -9,8 +15,8 @@ usage() {
 MAX_DEPTH=0
 
 if [[ "${1:-}" == "--max_depth" ]]; then
-  if [[ $# -lt 3 ]]; then
-    echo "Error: --max_depth requires a numeric argument and two dirs" >&2
+  if (( $# < 3 )); then
+    echo "Error: --max_depth requires a number and two dirs" >&2
     usage
   fi
   shift
@@ -22,7 +28,7 @@ if [[ "${1:-}" == "--max_depth" ]]; then
   shift
 fi
 
-if [[ $# -ne 2 ]]; then
+if (( $# != 2 )); then
   usage
 fi
 
@@ -74,3 +80,5 @@ while IFS= read -r -d '' FILE; do
 
   cp -p "$FILE" "$dest_dir/$newname"
 done < <(find "$INPUT_DIR" -type f -print0)
+
+exit 0
