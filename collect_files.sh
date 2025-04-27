@@ -2,27 +2,39 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-if [[ $# -ne 2 ]]; then
-  echo "$0 <входная_директория> <выходная_директория>"
+usage() {
+  echo "Usage: $0 <input_dir> <output_dir> [--max_depth N]"
   exit 1
+}
+
+if [[ $# -eq 2 ]]; then
+  INPUT_DIR=$1
+  OUTPUT_DIR=$2
+  MAX_DEPTH=
+elif [[ $# -eq 4 && $3 == "--max_depth" && $4 =~ ^[0-9]+$ ]]; then
+  INPUT_DIR=$1
+  OUTPUT_DIR=$2
+  MAX_DEPTH=$4
+else
+  usage
 fi
 
-INPUT_DIR=$1
-OUTPUT_DIR=$2
-
 if [[ ! -d "$INPUT_DIR" ]]; then
-  echo "Ошибка: входная директория '$INPUT_DIR' не найдена"
+  echo "Error: input directory '$INPUT_DIR' not found"
   exit 1
 fi
 
 mkdir -p "$OUTPUT_DIR"
 
-mapfile -t all_files < <(find "$INPUT_DIR" -type f)
+if [[ -n "${MAX_DEPTH:-}" ]]; then
+  mapfile -t all_files < <(find "$INPUT_DIR" -maxdepth "$MAX_DEPTH" -type f)
+else
+  mapfile -t all_files < <(find "$INPUT_DIR" -type f)
+fi
 
 generate_unique_name() {
-  local dest_dir=$1
-  local base_name=$2
-  local name ext
+  local dest_dir="$1" base_name="$2"
+  local name ext candidate counter=1
   name="${base_name%.*}"
   ext="${base_name##*.}"
   if [[ "$name" == "$ext" ]]; then
@@ -30,9 +42,7 @@ generate_unique_name() {
   else
     ext=".$ext"
   fi
-
-  local candidate="$name$ext"
-  local counter=1
+  candidate="$name$ext"
   while [[ -e "$dest_dir/$candidate" ]]; do
     candidate="${name}(${counter})${ext}"
     ((counter++))
@@ -40,10 +50,10 @@ generate_unique_name() {
   echo "$candidate"
 }
 
-for src_path in "${all_files[@]}"; do
-  filename=$(basename -- "$src_path")
-  unique_name=$(generate_unique_name "$OUTPUT_DIR" "$filename")
-  cp -- "$src_path" "$OUTPUT_DIR/$unique_name"
+for src in "${all_files[@]}"; do
+  fname=$(basename -- "$src")
+  uname=$(generate_unique_name "$OUTPUT_DIR" "$fname")
+  cp -- "$src" "$OUTPUT_DIR/$uname"
 done
 
-echo "Скопировано ${#all_files[@]} файлов из '$INPUT_DIR' в '$OUTPUT_DIR'"
+echo "Copied ${#all_files[@]} files from '$INPUT_DIR' to '$OUTPUT_DIR'"
