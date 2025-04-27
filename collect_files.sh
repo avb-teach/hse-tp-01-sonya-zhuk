@@ -26,34 +26,47 @@ fi
 
 mkdir -p "$OUTPUT_DIR"
 
-if [[ -n "${MAX_DEPTH:-}" ]]; then
-  mapfile -t all_files < <(find "$INPUT_DIR" -maxdepth "$MAX_DEPTH" -type f)
-else
-  mapfile -t all_files < <(find "$INPUT_DIR" -type f)
-fi
+# Collect files
+mapfile -t all_files < <(find "$INPUT_DIR" -type f)
 
 generate_unique_name() {
-  local dest_dir="$1" base_name="$2"
-  local name ext candidate counter=1
-  name="${base_name%.*}"
-  ext="${base_name##*.}"
-  if [[ "$name" == "$ext" ]]; then
-    ext=""
-  else
-    ext=".$ext"
-  fi
+  local dir="$1" name ext base candidate counter=1
+  base="$2"
+  name="${base%.*}"
+  ext="${base##*.}"
+  if [[ "$name" == "$ext" ]]; then ext=""; else ext=".$ext"; fi
   candidate="$name$ext"
-  while [[ -e "$dest_dir/$candidate" ]]; do
+  while [[ -e "$dir/$candidate" ]]; do
     candidate="${name}(${counter})${ext}"
     ((counter++))
   done
   echo "$candidate"
 }
 
+count=0
+
 for src in "${all_files[@]}"; do
-  fname=$(basename -- "$src")
-  uname=$(generate_unique_name "$OUTPUT_DIR" "$fname")
-  cp -- "$src" "$OUTPUT_DIR/$uname"
+  # relative path without leading slash
+  rel="${src#${INPUT_DIR}/}"
+  if [[ -n "${MAX_DEPTH:-}" ]]; then
+    IFS='/' read -r -a parts <<< "$rel"
+    n=${#parts[@]}
+    if (( n <= MAX_DEPTH )); then
+      dest_rel="$rel"
+    else
+      start=$((MAX_DEPTH-1))
+      dest_rel="$(IFS=/; echo "${parts[@]:start}")"
+    fi
+    dest_dir="$OUTPUT_DIR/$(dirname "$dest_rel")"
+    base_name="$(basename "$dest_rel")"
+    mkdir -p "$dest_dir"
+  else
+    dest_dir="$OUTPUT_DIR"
+    base_name="$(basename "$rel")"
+  fi
+  uniq_name=$(generate_unique_name "$dest_dir" "$base_name")
+  cp -- "$src" "$dest_dir/$uniq_name"
+  ((count++))
 done
 
-echo "Copied ${#all_files[@]} files from '$INPUT_DIR' to '$OUTPUT_DIR'"
+echo "Copied $count files from '$INPUT_DIR' to '$OUTPUT_DIR'"
