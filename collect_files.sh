@@ -1,49 +1,86 @@
-#!/usr/bin/env bash
-set -euo pipefail
-IFS=$'\n\t'
+#!/bin/bash
 
-if [[ $# -ne 2 ]]; then
-  echo "$0 <входная_директория> <выходная_директория>"
-  exit 1
-fi
+max_depth=""
+pos=()
 
-INPUT_DIR=$1
-OUTPUT_DIR=$2
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --max_depth)
+        if [[ "$2" =~ ^[0-9]+$ ]]; then
+          max_depth="$2"
+          shift 2
+        else
+          exit 1
+        fi
+        ;;
+      *)
+        pos+=("$1")
+        shift
+        ;;
+    esac
+  done
 
-if [[ ! -d "$INPUT_DIR" ]]; then
-  echo "Ошибка: входная директория '$INPUT_DIR' не найдена"
-  exit 1
-fi
-
-mkdir -p "$OUTPUT_DIR"
-
-mapfile -t all_files < <(find "$INPUT_DIR" -type f)
-
-generate_unique_name() {
-  local dest_dir=$1
-  local base_name=$2
-  local name ext
-  name="${base_name%.*}"
-  ext="${base_name##*.}"
-  if [[ "$name" == "$ext" ]]; then
-    ext=""
-  else
-    ext=".$ext"
+  if [ "${#pos[@]}" -ne 2 ]; then
+    exit 1
   fi
 
-  local candidate="$name$ext"
-  local counter=1
-  while [[ -e "$dest_dir/$candidate" ]]; do
-    candidate="${name}(${counter})${ext}"
-    ((counter++))
-  done
-  echo "$candidate"
+  input_dir="${pos[0]}"
+  output_dir="${pos[1]}"
 }
 
-for src_path in "${all_files[@]}"; do
-  filename=$(basename -- "$src_path")
-  unique_name=$(generate_unique_name "$OUTPUT_DIR" "$filename")
-  cp -- "$src_path" "$OUTPUT_DIR/$unique_name"
-done
+compute_rel() {
+  local rel="$1"
+  if [ -n "$max_depth" ]; then
+    local tmp="$rel" slash_count=0 comps
+    while [ "${tmp#*/}" != "$tmp" ]; do
+      slash_count=$((slash_count + 1))
+      tmp="${tmp#*/}"
+    done
+    comps=$((slash_count + 1))
+    while [ "$comps" -gt "$max_depth" ]; do
+      rel="${rel#*/}"
+      comps=$((comps - 1))
+    done
+  fi
+  printf '%s' "$rel"
+}
 
-echo "Скопировано ${#all_files[@]} файлов из '$INPUT_DIR' в '$OUTPUT_DIR'"
+process_file() {
+  local file="$1"
+  local rel="${file#"$input_dir"/}"
+  rel=$(compute_rel "$rel")
+
+  local dest="$output_dir/$rel"
+  local dir="${dest%/*}"
+  local base="${dest##*/}"
+
+  mkdir -p "$dir"
+
+  local name="${base%.*}"
+  local ext="${base##*.}"
+  local new_base="$base"
+  local count=1
+
+  while [ -e "$dir/$new_base" ]; do
+    if [ "$ext" != "$base" ]; then
+      new_base="${name}_${count}.${ext}"
+    else
+      new_base="${name}_${count}"
+    fi
+    count=$((count + 1))
+  done
+
+  cp "$file" "$dir/$new_base"
+}
+
+main() {
+  parse_args "$@"
+  [ -d "$input_dir" ] || exit 1
+  mkdir -p "$output_dir"
+  find "$input_dir" -type f | while IFS= read -r file; do
+    process_file "$file"
+  done
+}
+
+main "$@"
